@@ -25,6 +25,10 @@ type WifiNetwork = {
   signal?: number;
   channel?: string;
 };
+type ApFilter = {
+  ssid: string;
+  bssid: string;
+};
 type Room = {
   id: string;
   name: string;
@@ -58,6 +62,7 @@ const PDFJS_URL =
 const PDFJS_WORKER_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 const WIFI_HELPER_URL = "http://127.0.0.1:8765";
+const AP_FILTER_STORAGE_KEY = "signal-canvas-selected-ap";
 
 const initialRooms: Room[] = [
   { id: "living", name: "거실", color: "#2563eb", boundary: [], boundaryClosed: false, measurements: [] },
@@ -248,6 +253,7 @@ export default function Home() {
   const [wifiNetworks, setWifiNetworks] = useState<WifiNetwork[]>([]);
   const [wifiScanning, setWifiScanning] = useState(false);
   const [wifiError, setWifiError] = useState("");
+  const [apFilter, setApFilter] = useState<ApFilter | null>(null);
   const [colorStops, setColorStops] = useState<ColorStop[]>(defaultColorStops);
   const [colorDrafts, setColorDrafts] = useState(
     defaultColorStops.map((stop) => String(stop.value)),
@@ -275,6 +281,22 @@ export default function Home() {
     setWifiNetworks([]);
     setWifiError("");
   }, [selectedMeasurementId, selectedMeasurement?.measurement.rssi]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(AP_FILTER_STORAGE_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as Partial<ApFilter>;
+      if (parsed.ssid && parsed.bssid) {
+        setApFilter({
+          ssid: parsed.ssid,
+          bssid: parsed.bssid.toUpperCase(),
+        });
+      }
+    } catch {
+      window.localStorage.removeItem(AP_FILTER_STORAGE_KEY);
+    }
+  }, []);
 
   const setCanvasImage = useCallback(async (source: string) => {
     const image = new Image();
@@ -746,7 +768,7 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(payload.error || `도우미 응답 오류 (${response.status})`);
       }
-      const networks = (payload.networks || [])
+      const scannedNetworks = (payload.networks || [])
         .filter(
           (network) =>
             network.ssid &&
@@ -755,11 +777,21 @@ export default function Home() {
         )
         .map((network) => ({ ...network, rssi: Number(network.rssi) }))
         .sort((a, b) => b.rssi - a.rssi);
+      const networks = apFilter
+        ? scannedNetworks.filter(
+            (network) =>
+              network.bssid.toUpperCase() === apFilter.bssid.toUpperCase(),
+          )
+        : scannedNetworks;
       setWifiNetworks(networks);
       setMessage(
         networks.length
-          ? `주변 Wi‑Fi ${networks.length}개를 찾았습니다. 측정할 AP를 선택하세요.`
-          : "검색된 Wi‑Fi가 없습니다. 노트북의 Wi‑Fi와 위치 서비스 상태를 확인하세요.",
+          ? apFilter
+            ? `${apFilter.ssid} · ${apFilter.bssid}의 신호를 찾았습니다.`
+            : `주변 Wi‑Fi ${networks.length}개를 찾았습니다. 측정할 AP를 선택하세요.`
+          : apFilter
+            ? `고정된 AP ${apFilter.ssid} · ${apFilter.bssid}가 현재 검색되지 않습니다.`
+            : "검색된 Wi‑Fi가 없습니다. 노트북의 Wi‑Fi와 위치 서비스 상태를 확인하세요.",
       );
     } catch (error) {
       console.error(error);
@@ -798,9 +830,26 @@ export default function Home() {
       ),
     );
     setRssiDraft(String(rssi));
-    setMessage(
-      `${network.ssid} · ${network.bssid.toUpperCase()} · ${rssi} dBm을 저장했습니다.`,
+    const nextFilter = {
+      ssid: network.ssid,
+      bssid: network.bssid.toUpperCase(),
+    };
+    setApFilter(nextFilter);
+    window.localStorage.setItem(
+      AP_FILTER_STORAGE_KEY,
+      JSON.stringify(nextFilter),
     );
+    setWifiNetworks([network]);
+    setMessage(
+      `${network.ssid} · ${network.bssid.toUpperCase()} · ${rssi} dBm을 저장하고 선택 AP로 고정했습니다.`,
+    );
+  };
+
+  const clearApFilter = () => {
+    setApFilter(null);
+    setWifiNetworks([]);
+    window.localStorage.removeItem(AP_FILTER_STORAGE_KEY);
+    setMessage("AP 고정을 해제했습니다. 다음 스캔에서 주변 AP를 모두 표시합니다.");
   };
 
   const finishBoundary = () => {
@@ -1285,6 +1334,14 @@ export default function Home() {
               >
                 {wifiScanning ? "주변 Wi‑Fi 검색 중…" : "노트북 Wi‑Fi 스캔"}
               </button>
+              {apFilter && (
+                <div className="ap-filter-card">
+                  <span>선택 AP만 표시</span>
+                  <strong>{apFilter.ssid}</strong>
+                  <code>{apFilter.bssid}</code>
+                  <button onClick={clearApFilter}>필터 해제·다른 AP 선택</button>
+                </div>
+              )}
               <a
                 className="helper-download"
                 href="/downloads/signal-canvas-wifi-helper.zip"

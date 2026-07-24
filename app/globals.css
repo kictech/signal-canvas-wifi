@@ -1105,6 +1105,47 @@ input[type="range"] {
   margin-top: 0;
 }
 
+.ap-filter-card {
+  margin-top: 7px;
+  padding: 8px 9px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  display: grid;
+  gap: 2px;
+}
+
+.ap-filter-card span {
+  color: #2563eb;
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.ap-filter-card strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-filter-card code {
+  color: #526075;
+  font-size: 8px;
+}
+
+.ap-filter-card button {
+  width: fit-content;
+  margin-top: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1d4ed8;
+  font-size: 8px;
+  font-weight: 750;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .floating-actions {
   display: grid;
   grid-template-rows: repeat(3, 1fr);
