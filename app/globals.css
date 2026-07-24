@@ -841,7 +841,8 @@ input[type="range"] {
   font-size: 8px;
 }
 
-.measurement-editor h3 {
+.measurement-editor h3,
+.floating-point h3 {
   margin: 0 0 3px;
   font-size: 12px;
 }
@@ -1039,6 +1040,93 @@ input[type="range"] {
   gap: 8px;
 }
 
+.floating-measurement-panel {
+  width: min(1120px, calc(100% - 36px));
+  margin: 14px auto 0;
+  padding: 14px;
+  border: 1px solid #d4deec;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow:
+    0 14px 34px rgba(15, 23, 42, 0.12),
+    0 2px 7px rgba(15, 23, 42, 0.06);
+  display: grid;
+  grid-template-columns:
+    minmax(170px, 0.9fr)
+    minmax(190px, 1fr)
+    minmax(180px, 0.9fr)
+    minmax(180px, 0.9fr);
+  gap: 12px;
+  align-items: stretch;
+  z-index: 3;
+}
+
+.floating-point,
+.floating-network,
+.floating-scan,
+.floating-actions {
+  min-width: 0;
+}
+
+.floating-point {
+  display: flex;
+  flex-direction: column;
+}
+
+.floating-point .rssi-input {
+  margin-top: 7px;
+}
+
+.floating-point > small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.floating-network .saved-network {
+  height: 100%;
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.empty-network {
+  opacity: 0.68;
+}
+
+.floating-scan {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.floating-scan .wifi-scan-button {
+  margin-top: 0;
+}
+
+.floating-actions {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+}
+
+.floating-actions .button {
+  width: 100%;
+  min-height: 38px;
+}
+
+.floating-results {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+  border-top: 1px solid #e4e9f0;
+}
+
+.floating-results .wifi-list {
+  max-height: 190px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1058,6 +1146,10 @@ input[type="range"] {
 
   .panel {
     padding: 18px 14px;
+  }
+
+  .floating-measurement-panel {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
@@ -1102,6 +1194,11 @@ input[type="range"] {
 
   .canvas-stage canvas {
     max-height: 58vh;
+  }
+
+  .floating-measurement-panel {
+    width: calc(100% - 24px);
+    margin-top: 12px;
   }
 }
 
@@ -1160,6 +1257,16 @@ input[type="range"] {
 
   .canvas-stage canvas {
     max-height: 52vh;
+  }
+
+  .floating-measurement-panel {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .floating-actions {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: none;
   }
 
   .room-list {

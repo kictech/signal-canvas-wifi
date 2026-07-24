@@ -1093,6 +1093,132 @@ export default function Home() {
             )}
           </div>
 
+          <div className="floating-measurement-panel">
+            <div className="floating-point">
+              <div className="editor-heading">
+                <div>
+                  <h3>선택한 측정점</h3>
+                  <p>
+                    {selectedMeasurement
+                      ? selectedMeasurement.room.name
+                      : "도면에서 점을 선택하세요."}
+                  </p>
+                </div>
+                {selectedMeasurement && (
+                  <button onClick={deleteSelected} className="delete-button">
+                    삭제
+                  </button>
+                )}
+              </div>
+              <div className="rssi-input">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rssiDraft}
+                  disabled={!selectedMeasurement}
+                  onChange={(event) =>
+                    setRssiDraft(event.target.value.replace(/[^\d-]/g, ""))
+                  }
+                  onBlur={commitRssiDraft}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      commitRssiDraft();
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  aria-label="RSSI 값"
+                />
+                <span>dBm</span>
+              </div>
+              <small>-100에서 -20 dBm 사이</small>
+            </div>
+
+            <div className="floating-network">
+              {selectedMeasurement?.measurement.ssid ? (
+                <div className="saved-network">
+                  <span>저장된 AP</span>
+                  <strong>{selectedMeasurement.measurement.ssid}</strong>
+                  <code>{selectedMeasurement.measurement.bssid}</code>
+                </div>
+              ) : (
+                <div className="saved-network empty-network">
+                  <span>저장된 AP</span>
+                  <strong>아직 선택되지 않음</strong>
+                  <code>Wi‑Fi를 스캔해 선택하세요.</code>
+                </div>
+              )}
+            </div>
+
+            <div className="floating-scan">
+              <button
+                className="wifi-scan-button"
+                onClick={scanWifi}
+                disabled={!selectedMeasurement || wifiScanning}
+              >
+                {wifiScanning ? "주변 Wi‑Fi 검색 중…" : "노트북 Wi‑Fi 스캔"}
+              </button>
+              <a
+                className="helper-download"
+                href="/downloads/signal-canvas-wifi-helper.zip"
+                download
+              >
+                Windows 측정 도우미 다운로드
+              </a>
+            </div>
+
+            <div className="floating-actions">
+              <button
+                className="button button-danger"
+                onClick={resetAll}
+                disabled={!imageReady}
+              >
+                모든 표시 초기화
+              </button>
+              <button
+                className="button button-primary"
+                onClick={downloadPng}
+                disabled={!imageReady}
+              >
+                결과 PNG 저장
+              </button>
+            </div>
+
+            {(wifiError || wifiNetworks.length > 0) && (
+              <div className="floating-results">
+                {wifiError && <p className="wifi-error">{wifiError}</p>}
+                {wifiNetworks.length > 0 && (
+                  <div
+                    className="wifi-list"
+                    role="list"
+                    aria-label="주변 Wi‑Fi 목록"
+                  >
+                    {wifiNetworks.map((network) => (
+                      <button
+                        key={`${network.bssid}-${network.channel || ""}`}
+                        onClick={() => selectWifiNetwork(network)}
+                        className={
+                          selectedMeasurement?.measurement.bssid?.toUpperCase() ===
+                          network.bssid.toUpperCase()
+                            ? "selected"
+                            : ""
+                        }
+                      >
+                        <span className="wifi-main">
+                          <strong>{network.ssid}</strong>
+                          <code>{network.bssid.toUpperCase()}</code>
+                        </span>
+                        <span className="wifi-reading">
+                          <strong>{Math.round(network.rssi)} dBm</strong>
+                          {network.channel && <small>CH {network.channel}</small>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="privacy-note">
             <span>●</span>
             도면과 측정값은 서버에 저장되지 않습니다.
@@ -1232,106 +1358,6 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="separator" />
-
-          <div className="measurement-editor">
-            <div className="editor-heading">
-              <div>
-                <h3>선택한 측정점</h3>
-                <p>
-                  {selectedMeasurement
-                    ? selectedMeasurement.room.name
-                    : "도면에서 점을 선택하세요."}
-                </p>
-              </div>
-              {selectedMeasurement && (
-                <button onClick={deleteSelected} className="delete-button">
-                  삭제
-                </button>
-              )}
-            </div>
-            <div className="rssi-input">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={rssiDraft}
-                disabled={!selectedMeasurement}
-                onChange={(event) =>
-                  setRssiDraft(event.target.value.replace(/[^\d-]/g, ""))
-                }
-                onBlur={commitRssiDraft}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    commitRssiDraft();
-                    event.currentTarget.blur();
-                  }
-                }}
-                aria-label="RSSI 값"
-              />
-              <span>dBm</span>
-            </div>
-            <small>-100에서 -20 dBm 사이 값을 입력하세요.</small>
-            {selectedMeasurement?.measurement.ssid && (
-              <div className="saved-network">
-                <span>저장된 AP</span>
-                <strong>{selectedMeasurement.measurement.ssid}</strong>
-                <code>{selectedMeasurement.measurement.bssid}</code>
-              </div>
-            )}
-            <button
-              className="wifi-scan-button"
-              onClick={scanWifi}
-              disabled={!selectedMeasurement || wifiScanning}
-            >
-              {wifiScanning ? "주변 Wi‑Fi 검색 중…" : "노트북 Wi‑Fi 스캔"}
-            </button>
-            <a
-              className="helper-download"
-              href="/downloads/signal-canvas-wifi-helper.zip"
-              download
-            >
-              Windows 측정 도우미 다운로드
-            </a>
-            {wifiError && <p className="wifi-error">{wifiError}</p>}
-            {wifiNetworks.length > 0 && (
-              <div className="wifi-list" role="list" aria-label="주변 Wi‑Fi 목록">
-                {wifiNetworks.map((network) => (
-                  <button
-                    key={`${network.bssid}-${network.channel || ""}`}
-                    onClick={() => selectWifiNetwork(network)}
-                    className={
-                      selectedMeasurement?.measurement.bssid?.toUpperCase() ===
-                      network.bssid.toUpperCase()
-                        ? "selected"
-                        : ""
-                    }
-                  >
-                    <span className="wifi-main">
-                      <strong>{network.ssid}</strong>
-                      <code>{network.bssid.toUpperCase()}</code>
-                    </span>
-                    <span className="wifi-reading">
-                      <strong>{Math.round(network.rssi)} dBm</strong>
-                      {network.channel && <small>CH {network.channel}</small>}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bottom-actions">
-            <button className="button button-danger" onClick={resetAll} disabled={!imageReady}>
-              모든 표시 초기화
-            </button>
-            <button
-              className="button button-primary"
-              onClick={downloadPng}
-              disabled={!imageReady}
-            >
-              결과 PNG 저장
-            </button>
-          </div>
         </aside>
       </div>
     </main>
