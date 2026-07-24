@@ -872,6 +872,142 @@ input[type="range"] {
   background: #fff;
 }
 
+.saved-network {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #cbd8ea;
+  border-radius: 9px;
+  background: #f4f8ff;
+}
+
+.saved-network span,
+.saved-network strong,
+.saved-network code {
+  display: block;
+}
+
+.saved-network span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.saved-network strong {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.saved-network code {
+  margin-top: 3px;
+  color: #526075;
+  font-size: 10px;
+}
+
+.wifi-scan-button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 12px;
+  border: 1px solid #2563eb;
+  border-radius: 9px;
+  background: #eff5ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.wifi-scan-button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.helper-download {
+  margin-top: 8px;
+  display: block;
+  color: #526075;
+  font-size: 10px;
+  font-weight: 750;
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.wifi-error {
+  margin: 9px 0 0;
+  padding: 9px;
+  border-radius: 8px;
+  background: #fff4f2;
+  color: #b42318;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.wifi-list {
+  max-height: 230px;
+  margin-top: 9px;
+  display: grid;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.wifi-list > button {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wifi-list > button:hover,
+.wifi-list > button.selected {
+  border-color: #2563eb;
+  background: #f5f8ff;
+}
+
+.wifi-main,
+.wifi-reading {
+  display: grid;
+  gap: 3px;
+}
+
+.wifi-main {
+  min-width: 0;
+}
+
+.wifi-main strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wifi-main code {
+  color: #64748b;
+  font-size: 9px;
+}
+
+.wifi-reading {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.wifi-reading strong {
+  color: #1d4ed8;
+  font-size: 10px;
+}
+
+.wifi-reading small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .rssi-input input {
   min-width: 0;
   width: 100%;

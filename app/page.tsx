@@ -11,7 +11,19 @@ import {
 } from "react";
 
 type Point = { x: number; y: number };
-type Measurement = Point & { id: string; rssi: number };
+type Measurement = Point & {
+  id: string;
+  rssi: number;
+  ssid?: string;
+  bssid?: string;
+};
+type WifiNetwork = {
+  ssid: string;
+  bssid: string;
+  rssi: number;
+  signal?: number;
+  channel?: string;
+};
 type Room = {
   id: string;
   name: string;
@@ -44,6 +56,7 @@ const PDFJS_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
 const PDFJS_WORKER_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+const WIFI_HELPER_URL = "http://127.0.0.1:8765";
 
 const initialRooms: Room[] = [
   { id: "living", name: "거실", color: "#2563eb", boundary: [], boundaryClosed: false, measurements: [] },
@@ -162,6 +175,9 @@ export default function Home() {
   const [zoom, setZoom] = useState(1);
   const [newRoomName, setNewRoomName] = useState("");
   const [rssiDraft, setRssiDraft] = useState("");
+  const [wifiNetworks, setWifiNetworks] = useState<WifiNetwork[]>([]);
+  const [wifiScanning, setWifiScanning] = useState(false);
+  const [wifiError, setWifiError] = useState("");
   const [colorStops, setColorStops] = useState<ColorStop[]>(defaultColorStops);
   const [colorDrafts, setColorDrafts] = useState(
     defaultColorStops.map((stop) => String(stop.value)),
@@ -186,6 +202,8 @@ export default function Home() {
     setRssiDraft(
       selectedMeasurement ? String(selectedMeasurement.measurement.rssi) : "",
     );
+    setWifiNetworks([]);
+    setWifiError("");
   }, [selectedMeasurementId, selectedMeasurement?.measurement.rssi]);
 
   const setCanvasImage = useCallback(async (source: string) => {
@@ -638,6 +656,72 @@ export default function Home() {
     }
     updateSelectedRssi(value);
     setMessage(`RSSI 값을 ${value} dBm으로 저장했습니다.`);
+  };
+
+  const scanWifi = async () => {
+    if (!selectedMeasurement) return;
+    setWifiScanning(true);
+    setWifiError("");
+    setWifiNetworks([]);
+    try {
+      const response = await fetch(`${WIFI_HELPER_URL}/scan`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!response.ok) throw new Error(`도우미 응답 오류 (${response.status})`);
+      const payload = (await response.json()) as { networks?: WifiNetwork[] };
+      const networks = (payload.networks || [])
+        .filter(
+          (network) =>
+            network.ssid &&
+            network.bssid &&
+            Number.isFinite(Number(network.rssi)),
+        )
+        .map((network) => ({ ...network, rssi: Number(network.rssi) }))
+        .sort((a, b) => b.rssi - a.rssi);
+      setWifiNetworks(networks);
+      setMessage(
+        networks.length
+          ? `주변 Wi‑Fi ${networks.length}개를 찾았습니다. 측정할 AP를 선택하세요.`
+          : "검색된 Wi‑Fi가 없습니다. 노트북의 Wi‑Fi와 위치 서비스 상태를 확인하세요.",
+      );
+    } catch (error) {
+      console.error(error);
+      setWifiError(
+        "로컬 측정 도우미에 연결하지 못했습니다. 도우미를 실행한 뒤 다시 스캔하세요.",
+      );
+    } finally {
+      setWifiScanning(false);
+    }
+  };
+
+  const selectWifiNetwork = (network: WifiNetwork) => {
+    if (!selectedMeasurement) return;
+    const rssi = Math.max(-100, Math.min(-20, Math.round(network.rssi)));
+    setRooms((current) =>
+      current.map((room) =>
+        room.id === selectedMeasurement.room.id
+          ? {
+              ...room,
+              measurements: room.measurements.map((measurement) =>
+                measurement.id === selectedMeasurement.measurement.id
+                  ? {
+                      ...measurement,
+                      rssi,
+                      ssid: network.ssid,
+                      bssid: network.bssid.toUpperCase(),
+                    }
+                  : measurement,
+              ),
+            }
+          : room,
+      ),
+    );
+    setRssiDraft(String(rssi));
+    setMessage(
+      `${network.ssid} · ${network.bssid.toUpperCase()} · ${rssi} dBm을 저장했습니다.`,
+    );
   };
 
   const finishBoundary = () => {
@@ -1178,6 +1262,53 @@ export default function Home() {
               <span>dBm</span>
             </div>
             <small>-100에서 -20 dBm 사이 값을 입력하세요.</small>
+            {selectedMeasurement?.measurement.ssid && (
+              <div className="saved-network">
+                <span>저장된 AP</span>
+                <strong>{selectedMeasurement.measurement.ssid}</strong>
+                <code>{selectedMeasurement.measurement.bssid}</code>
+              </div>
+            )}
+            <button
+              className="wifi-scan-button"
+              onClick={scanWifi}
+              disabled={!selectedMeasurement || wifiScanning}
+            >
+              {wifiScanning ? "주변 Wi‑Fi 검색 중…" : "노트북 Wi‑Fi 스캔"}
+            </button>
+            <a
+              className="helper-download"
+              href="/downloads/signal-canvas-wifi-helper.zip"
+              download
+            >
+              Windows 측정 도우미 다운로드
+            </a>
+            {wifiError && <p className="wifi-error">{wifiError}</p>}
+            {wifiNetworks.length > 0 && (
+              <div className="wifi-list" role="list" aria-label="주변 Wi‑Fi 목록">
+                {wifiNetworks.map((network) => (
+                  <button
+                    key={`${network.bssid}-${network.channel || ""}`}
+                    onClick={() => selectWifiNetwork(network)}
+                    className={
+                      selectedMeasurement?.measurement.bssid?.toUpperCase() ===
+                      network.bssid.toUpperCase()
+                        ? "selected"
+                        : ""
+                    }
+                  >
+                    <span className="wifi-main">
+                      <strong>{network.ssid}</strong>
+                      <code>{network.bssid.toUpperCase()}</code>
+                    </span>
+                    <span className="wifi-reading">
+                      <strong>{Math.round(network.rssi)} dBm</strong>
+                      {network.channel && <small>CH {network.channel}</small>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="bottom-actions">
