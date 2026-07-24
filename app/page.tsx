@@ -17,10 +17,12 @@ type Room = {
   name: string;
   color: string;
   boundary: Point[];
+  boundaryClosed: boolean;
   measurements: Measurement[];
 };
 type ToolMode = "select" | "boundary" | "measure" | "router";
 type HeatMethod = "idw" | "gaussian";
+type ColorStop = { value: number; color: string };
 
 type PdfPage = {
   getViewport(options: { scale: number }): { width: number; height: number };
@@ -44,10 +46,18 @@ const PDFJS_WORKER_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 
 const initialRooms: Room[] = [
-  { id: "living", name: "거실", color: "#2563eb", boundary: [], measurements: [] },
-  { id: "bed-1", name: "침실 1", color: "#7c3aed", boundary: [], measurements: [] },
-  { id: "bed-2", name: "침실 2", color: "#db2777", boundary: [], measurements: [] },
-  { id: "bed-3", name: "침실 3", color: "#ea580c", boundary: [], measurements: [] },
+  { id: "living", name: "거실", color: "#2563eb", boundary: [], boundaryClosed: false, measurements: [] },
+  { id: "bed-1", name: "침실 1", color: "#7c3aed", boundary: [], boundaryClosed: false, measurements: [] },
+  { id: "bed-2", name: "침실 2", color: "#db2777", boundary: [], boundaryClosed: false, measurements: [] },
+  { id: "bed-3", name: "침실 3", color: "#ea580c", boundary: [], boundaryClosed: false, measurements: [] },
+];
+const roomColors = ["#0891b2", "#16a34a", "#ca8a04", "#dc2626", "#4f46e5", "#c026d3"];
+const defaultColorStops: ColorStop[] = [
+  { value: -90, color: "#dc2626" },
+  { value: -75, color: "#f97316" },
+  { value: -65, color: "#facc15" },
+  { value: -55, color: "#84cc16" },
+  { value: -30, color: "#16a34a" },
 ];
 
 function uid() {
@@ -70,15 +80,20 @@ function pointInPolygon(point: Point, polygon: Point[]) {
   return inside;
 }
 
-function colorForRssi(value: number) {
-  const stops = [
-    { value: -90, color: [220, 38, 38] },
-    { value: -75, color: [249, 115, 22] },
-    { value: -65, color: [250, 204, 21] },
-    { value: -55, color: [132, 204, 22] },
-    { value: -30, color: [22, 163, 74] },
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  return [
+    parseInt(normalized.slice(0, 2), 16),
+    parseInt(normalized.slice(2, 4), 16),
+    parseInt(normalized.slice(4, 6), 16),
   ];
-  const clamped = Math.max(-90, Math.min(-30, value));
+}
+
+function colorForRssi(value: number, sourceStops: ColorStop[]) {
+  const stops = [...sourceStops]
+    .sort((a, b) => a.value - b.value)
+    .map((stop) => ({ ...stop, rgb: hexToRgb(stop.color) }));
+  const clamped = Math.max(stops[0].value, Math.min(stops[stops.length - 1].value, value));
   let low = stops[0];
   let high = stops[stops.length - 1];
   for (let i = 0; i < stops.length - 1; i++) {
@@ -89,8 +104,8 @@ function colorForRssi(value: number) {
     }
   }
   const t = (clamped - low.value) / (high.value - low.value || 1);
-  return low.color.map((channel, i) =>
-    Math.round(channel + (high.color[i] - channel) * t),
+  return low.rgb.map((channel, i) =>
+    Math.round(channel + (high.rgb[i] - channel) * t),
   );
 }
 
@@ -144,6 +159,13 @@ export default function Home() {
   const [showLabels, setShowLabels] = useState(true);
   const [pdfPages, setPdfPages] = useState(0);
   const [pdfPage, setPdfPage] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const [newRoomName, setNewRoomName] = useState("");
+  const [rssiDraft, setRssiDraft] = useState("");
+  const [colorStops, setColorStops] = useState<ColorStop[]>(defaultColorStops);
+  const [colorDrafts, setColorDrafts] = useState(
+    defaultColorStops.map((stop) => String(stop.value)),
+  );
 
   const activeRoom = rooms.find((room) => room.id === activeRoomId)!;
   const selectedMeasurement = useMemo(() => {
@@ -159,6 +181,12 @@ export default function Home() {
     (sum, room) => sum + room.measurements.length,
     0,
   );
+
+  useEffect(() => {
+    setRssiDraft(
+      selectedMeasurement ? String(selectedMeasurement.measurement.rssi) : "",
+    );
+  }, [selectedMeasurementId, selectedMeasurement?.measurement.rssi]);
 
   const setCanvasImage = useCallback(async (source: string) => {
     const image = new Image();
@@ -218,6 +246,7 @@ export default function Home() {
     try {
       setFileName(file.name);
       setRooms(initialRooms);
+      setActiveRoomId(initialRooms[0].id);
       setRouter(null);
       setSelectedMeasurementId(null);
       if (extension === "pdf") {
@@ -238,7 +267,7 @@ export default function Home() {
         await setCanvasImage(URL.createObjectURL(file));
       }
       setMode("boundary");
-      setMessage("거실의 네 코너를 시계 방향으로 클릭하세요.");
+      setMessage("거실의 경계점을 차례대로 클릭한 뒤 다각형을 완성하세요.");
     } catch (error) {
       console.error(error);
       setMessage(
@@ -259,6 +288,7 @@ export default function Home() {
     try {
       await renderPdfPage(doc, nextPage);
       setRooms(initialRooms);
+      setActiveRoomId(initialRooms[0].id);
       setRouter(null);
       setMessage(`${nextPage}페이지를 불러왔습니다. 방 경계를 다시 지정하세요.`);
     } finally {
@@ -297,6 +327,7 @@ export default function Home() {
               };
               const room = rooms.find(
                 (candidate) =>
+                  candidate.boundaryClosed &&
                   candidate.boundary.length >= 3 &&
                   candidate.measurements.length > 0 &&
                   pointInPolygon(point, candidate.boundary),
@@ -304,7 +335,7 @@ export default function Home() {
               if (!room) continue;
               const prediction = predictRssi(point, room.measurements, method);
               if (prediction === null) continue;
-              const [red, green, blue] = colorForRssi(prediction);
+              const [red, green, blue] = colorForRssi(prediction, colorStops);
               const index = (y * heatCanvas.width + x) * 4;
               imageData.data[index] = red;
               imageData.data[index + 1] = green;
@@ -335,7 +366,7 @@ export default function Home() {
             if (index === 0) context.moveTo(x, y);
             else context.lineTo(x, y);
           });
-          if (room.boundary.length === 4) context.closePath();
+          if (room.boundaryClosed) context.closePath();
           context.stroke();
           context.restore();
         }
@@ -416,11 +447,15 @@ export default function Home() {
           left + legendWidth,
           top,
         );
-        gradient.addColorStop(0, "#dc2626");
-        gradient.addColorStop(0.25, "#f97316");
-        gradient.addColorStop(0.5, "#facc15");
-        gradient.addColorStop(0.72, "#84cc16");
-        gradient.addColorStop(1, "#16a34a");
+        const sortedStops = [...colorStops].sort((a, b) => a.value - b.value);
+        const minStop = sortedStops[0].value;
+        const maxStop = sortedStops[sortedStops.length - 1].value;
+        sortedStops.forEach((stop) =>
+          gradient.addColorStop(
+            (stop.value - minStop) / (maxStop - minStop || 1),
+            stop.color,
+          ),
+        );
         context.fillStyle = "rgba(255,255,255,.94)";
         context.fillRect(left - 12, top - 28, legendWidth + 24, legendHeight + 46);
         context.fillStyle = gradient;
@@ -428,14 +463,15 @@ export default function Home() {
         context.fillStyle = "#0f172a";
         context.font = `700 ${Math.max(12, Math.round(legendHeight * 0.28))}px Arial`;
         context.textAlign = "left";
-        context.fillText("약함 -90 dBm", left, top + legendHeight);
+        context.fillText(`약함 ${minStop} dBm`, left, top + legendHeight);
         context.textAlign = "right";
-        context.fillText("강함 -30 dBm", left + legendWidth, top + legendHeight);
+        context.fillText(`강함 ${maxStop} dBm`, left + legendWidth, top + legendHeight);
       }
     },
     [
       method,
       opacity,
+      colorStops,
       rooms,
       router,
       selectedMeasurementId,
@@ -485,24 +521,28 @@ export default function Home() {
     if (!imageReady) return;
     const point = normalizedPoint(event);
     if (mode === "boundary") {
+      if (activeRoom.boundaryClosed) {
+        setMessage("완성된 경계입니다. ‘경계 다시 지정’을 눌러 수정하세요.");
+        return;
+      }
       setRooms((current) =>
         current.map((room) =>
-          room.id === activeRoomId && room.boundary.length < 4
+          room.id === activeRoomId
             ? { ...room, boundary: [...room.boundary, point] }
             : room,
         ),
       );
       const nextCount = activeRoom.boundary.length + 1;
       setMessage(
-        nextCount >= 4
-          ? `${activeRoom.name} 경계가 완성되었습니다. 측정점을 추가하거나 다음 방을 선택하세요.`
-          : `${activeRoom.name} 경계 ${nextCount}/4 — 다음 코너를 클릭하세요.`,
+        nextCount >= 3
+          ? `${activeRoom.name} 경계점 ${nextCount}개 — 필요한 점을 더 찍거나 ‘다각형 완성’을 누르세요.`
+          : `${activeRoom.name} 경계점 ${nextCount}개 — 최소 3개가 필요합니다.`,
       );
       return;
     }
     if (mode === "measure") {
       if (
-        activeRoom.boundary.length === 4 &&
+        activeRoom.boundaryClosed &&
         !pointInPolygon(point, activeRoom.boundary)
       ) {
         setMessage(`${activeRoom.name} 경계 안을 클릭해 주세요.`);
@@ -588,6 +628,85 @@ export default function Home() {
     );
   };
 
+  const commitRssiDraft = () => {
+    if (!selectedMeasurement) return;
+    const value = Number(rssiDraft);
+    if (!Number.isFinite(value) || value < -100 || value > -20) {
+      setRssiDraft(String(selectedMeasurement.measurement.rssi));
+      setMessage("RSSI는 -100에서 -20 dBm 사이의 숫자로 입력하세요.");
+      return;
+    }
+    updateSelectedRssi(value);
+    setMessage(`RSSI 값을 ${value} dBm으로 저장했습니다.`);
+  };
+
+  const finishBoundary = () => {
+    if (activeRoom.boundary.length < 3) {
+      setMessage("다각형 경계는 최소 3개의 점이 필요합니다.");
+      return;
+    }
+    setRooms((current) =>
+      current.map((room) =>
+        room.id === activeRoomId ? { ...room, boundaryClosed: true } : room,
+      ),
+    );
+    setMode("measure");
+    setMessage(`${activeRoom.name} 다각형이 완성되었습니다. 측정점을 추가하세요.`);
+  };
+
+  const addRoom = () => {
+    const name = newRoomName.trim();
+    if (!name) {
+      setMessage("추가할 공간 이름을 입력하세요.");
+      return;
+    }
+    const room: Room = {
+      id: uid(),
+      name,
+      color: roomColors[rooms.length % roomColors.length],
+      boundary: [],
+      boundaryClosed: false,
+      measurements: [],
+    };
+    setRooms((current) => [...current, room]);
+    setActiveRoomId(room.id);
+    setNewRoomName("");
+    setMode("boundary");
+    setMessage(`${name}의 경계점을 차례대로 클릭하세요.`);
+  };
+
+  const updateColorStop = (
+    index: number,
+    patch: Partial<ColorStop>,
+  ) => {
+    setColorStops((current) =>
+      current.map((stop, stopIndex) =>
+        stopIndex === index ? { ...stop, ...patch } : stop,
+      ),
+    );
+  };
+
+  const commitColorStopValue = (index: number) => {
+    const value = Number(colorDrafts[index]);
+    if (!Number.isFinite(value) || value < -100 || value > -20) {
+      setColorDrafts((current) =>
+        current.map((draft, draftIndex) =>
+          draftIndex === index ? String(colorStops[index].value) : draft,
+        ),
+      );
+      setMessage("색상 기준값은 -100에서 -20 dBm 사이여야 합니다.");
+      return;
+    }
+    updateColorStop(index, { value });
+    setMessage(`색상 기준 ${index + 1}을 ${value} dBm으로 저장했습니다.`);
+  };
+
+  const resetColorMapping = () => {
+    setColorStops(defaultColorStops);
+    setColorDrafts(defaultColorStops.map((stop) => String(stop.value)));
+    setMessage("신호 색상 매핑을 기본값으로 복원했습니다.");
+  };
+
   const deleteSelected = () => {
     if (!selectedMeasurementId) return;
     setRooms((current) =>
@@ -605,19 +724,22 @@ export default function Home() {
   const resetBoundary = () => {
     setRooms((current) =>
       current.map((room) =>
-        room.id === activeRoomId ? { ...room, boundary: [] } : room,
+        room.id === activeRoomId
+          ? { ...room, boundary: [], boundaryClosed: false }
+          : room,
       ),
     );
     setMode("boundary");
-    setMessage(`${activeRoom.name}의 네 코너를 다시 지정하세요.`);
+    setMessage(`${activeRoom.name}의 경계점을 차례대로 지정하세요.`);
   };
 
   const resetAll = () => {
     setRooms(initialRooms);
+    setActiveRoomId(initialRooms[0].id);
     setRouter(null);
     setSelectedMeasurementId(null);
     setMode("boundary");
-    setMessage("모든 표시를 지웠습니다. 거실의 네 코너부터 지정하세요.");
+    setMessage("모든 표시를 지웠습니다. 거실 경계부터 지정하세요.");
   };
 
   const downloadPng = () => {
@@ -638,9 +760,9 @@ export default function Home() {
   const chooseRoom = (room: Room) => {
     setActiveRoomId(room.id);
     setSelectedMeasurementId(null);
-    if (room.boundary.length < 4) {
+    if (!room.boundaryClosed) {
       setMode("boundary");
-      setMessage(`${room.name}의 네 코너를 시계 방향으로 클릭하세요.`);
+      setMessage(`${room.name}의 경계점을 차례대로 클릭하고 다각형을 완성하세요.`);
     } else {
       setMode("measure");
       setMessage(`${room.name} 내부를 클릭해 RSSI 측정점을 추가하세요.`);
@@ -703,7 +825,7 @@ export default function Home() {
                 <span className="room-main">
                   <strong>{room.name}</strong>
                   <small>
-                    경계 {room.boundary.length}/4 · 측정 {room.measurements.length}개
+                    경계 {room.boundaryClosed ? "완료" : `${room.boundary.length}점`} · 측정 {room.measurements.length}개
                   </small>
                 </span>
                 <span className="room-chevron">›</span>
@@ -711,13 +833,35 @@ export default function Home() {
             ))}
           </div>
 
-          <button
-            className="text-button"
-            onClick={resetBoundary}
-            disabled={!imageReady}
-          >
-            선택한 방 경계 다시 지정
-          </button>
+          <div className="room-add-row">
+            <input
+              value={newRoomName}
+              onChange={(event) => setNewRoomName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") addRoom();
+              }}
+              placeholder="공간 이름"
+              aria-label="추가할 공간 이름"
+            />
+            <button onClick={addRoom}>공간 추가</button>
+          </div>
+
+          <div className="boundary-actions">
+            <button
+              className="button button-primary"
+              onClick={finishBoundary}
+              disabled={!imageReady || activeRoom.boundaryClosed || activeRoom.boundary.length < 3}
+            >
+              다각형 완성
+            </button>
+            <button
+              className="text-button"
+              onClick={resetBoundary}
+              disabled={!imageReady}
+            >
+              경계 다시 지정
+            </button>
+          </div>
 
           <div className="separator" />
 
@@ -778,15 +922,41 @@ export default function Home() {
             <div>
               <strong>{activeRoom.name}</strong>
               <span>
-                {mode === "boundary" && "네 코너를 시계 방향으로 클릭"}
+                {mode === "boundary" && "경계점을 차례대로 클릭한 뒤 다각형 완성"}
                 {mode === "measure" && "원하는 위치를 클릭해 측정점 추가"}
                 {mode === "select" && "측정점을 선택하거나 드래그"}
                 {mode === "router" && "공유기 위치를 클릭"}
               </span>
             </div>
-            <div className="canvas-stats">
-              <span>{rooms.filter((room) => room.boundary.length === 4).length}/4 공간</span>
+            <div className="canvas-tools">
+              <div className="zoom-controls" aria-label="도면 확대 축소">
+                <button
+                  onClick={() => setZoom((value) => Math.max(0.5, value - 0.25))}
+                  disabled={!imageReady || zoom <= 0.5}
+                  aria-label="축소"
+                >
+                  −
+                </button>
+                <button
+                  className="zoom-value"
+                  onClick={() => setZoom(1)}
+                  disabled={!imageReady}
+                  title="100%로 초기화"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button
+                  onClick={() => setZoom((value) => Math.min(3, value + 0.25))}
+                  disabled={!imageReady || zoom >= 3}
+                  aria-label="확대"
+                >
+                  +
+                </button>
+              </div>
+              <div className="canvas-stats">
+              <span>{rooms.filter((room) => room.boundaryClosed).length}/{rooms.length} 공간</span>
               <span>{measurementCount} 측정점</span>
+              </div>
             </div>
           </div>
 
@@ -811,6 +981,11 @@ export default function Home() {
             <canvas
               ref={canvasRef}
               className={imageReady ? `mode-${mode}` : ""}
+              style={
+                imageReady
+                  ? { width: `${zoom * 100}%`, maxWidth: "none", maxHeight: "none" }
+                  : undefined
+              }
               onPointerDown={handleCanvasPointerDown}
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={endDragging}
@@ -908,14 +1083,59 @@ export default function Home() {
           <div className="legend-card">
             <div className="legend-title">
               <strong>RSSI 신호 세기</strong>
-              <span>dBm</span>
+              <button
+                className="legend-reset"
+                onClick={resetColorMapping}
+              >
+                기본값
+              </button>
             </div>
-            <div className="legend-gradient" />
-            <div className="legend-scale">
-              <span>-90<br /><small>매우 약함</small></span>
-              <span>-70</span>
-              <span>-55</span>
-              <span>-30<br /><small>매우 강함</small></span>
+            <div
+              className="legend-gradient"
+              style={{
+                background: `linear-gradient(90deg, ${[...colorStops]
+                  .sort((a, b) => a.value - b.value)
+                  .map((stop) => stop.color)
+                  .join(", ")})`,
+              }}
+            />
+            <div className="color-stop-list">
+              {colorStops.map((stop, index) => (
+                <div className="color-stop-row" key={index}>
+                  <input
+                    type="color"
+                    value={stop.color}
+                    onChange={(event) =>
+                      updateColorStop(index, { color: event.target.value })
+                    }
+                    aria-label={`${stop.value} dBm 색상`}
+                  />
+                  <input
+                    className="color-stop-value"
+                    type="text"
+                    inputMode="numeric"
+                    value={colorDrafts[index]}
+                    onChange={(event) =>
+                      setColorDrafts((current) =>
+                        current.map((draft, draftIndex) =>
+                          draftIndex === index
+                            ? event.target.value.replace(/[^\d-]/g, "")
+                            : draft,
+                        ),
+                      )
+                    }
+                    onBlur={() => commitColorStopValue(index)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        commitColorStopValue(index);
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    aria-label={`색상 기준 ${index + 1} RSSI`}
+                  />
+                  <span>dBm</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -939,13 +1159,20 @@ export default function Home() {
             </div>
             <div className="rssi-input">
               <input
-                type="number"
+                type="text"
                 inputMode="numeric"
-                min="-100"
-                max="-20"
-                value={selectedMeasurement?.measurement.rssi ?? ""}
+                value={rssiDraft}
                 disabled={!selectedMeasurement}
-                onChange={(event) => updateSelectedRssi(Number(event.target.value))}
+                onChange={(event) =>
+                  setRssiDraft(event.target.value.replace(/[^\d-]/g, ""))
+                }
+                onBlur={commitRssiDraft}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    commitRssiDraft();
+                    event.currentTarget.blur();
+                  }
+                }}
                 aria-label="RSSI 값"
               />
               <span>dBm</span>
