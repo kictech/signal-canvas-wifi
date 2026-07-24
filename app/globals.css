@@ -1107,13 +1107,24 @@ input[type="range"] {
 
 .floating-actions {
   display: grid;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: repeat(3, 1fr);
   gap: 8px;
 }
 
 .floating-actions .button {
   width: 100%;
   min-height: 38px;
+}
+
+.button-excel {
+  border-color: #15803d;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.button-excel:hover:not(:disabled) {
+  border-color: #166534;
+  background: #dcfce7;
 }
 
 .floating-results {
@@ -1265,7 +1276,7 @@ input[type="range"] {
   }
 
   .floating-actions {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     grid-template-rows: none;
   }
 
