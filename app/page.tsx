@@ -669,8 +669,13 @@ export default function Home() {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(12000),
       });
-      if (!response.ok) throw new Error(`도우미 응답 오류 (${response.status})`);
-      const payload = (await response.json()) as { networks?: WifiNetwork[] };
+      const payload = (await response.json()) as {
+        networks?: WifiNetwork[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || `도우미 응답 오류 (${response.status})`);
+      }
       const networks = (payload.networks || [])
         .filter(
           (network) =>
@@ -689,7 +694,11 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       setWifiError(
-        "로컬 측정 도우미에 연결하지 못했습니다. 도우미를 실행한 뒤 다시 스캔하세요.",
+        error instanceof Error &&
+          error.message &&
+          !error.message.includes("Failed to fetch")
+          ? error.message
+          : "로컬 측정 도우미에 연결하지 못했습니다. 도우미를 실행한 뒤 다시 스캔하세요.",
       );
     } finally {
       setWifiScanning(false);
