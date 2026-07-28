@@ -245,6 +245,7 @@ export default function Home() {
   const [wifiError, setWifiError] = useState("");
   const [helperReady, setHelperReady] = useState(false);
   const [apFilter, setApFilter] = useState<ApFilter | null>(null);
+  const [activeAp, setActiveAp] = useState<WifiNetwork | null>(null);
   const [rssiMinDraft, setRssiMinDraft] = useState("-90");
   const [rssiMaxDraft, setRssiMaxDraft] = useState("-30");
   const [rssiRange, setRssiRange] = useState({ min: -90, max: -30 });
@@ -278,8 +279,6 @@ export default function Home() {
     setRssiDraft(
       selectedMeasurement ? String(selectedMeasurement.measurement.rssi) : "",
     );
-    setWifiNetworks([]);
-    setWifiError("");
   }, [selectedMeasurementId, selectedMeasurement?.measurement.rssi]);
 
   useEffect(() => {
@@ -503,7 +502,9 @@ export default function Home() {
           if (showLabels) {
             context.font = `700 ${Math.round(unit * 0.92)}px Arial`;
             context.textBaseline = "middle";
-            const label = `${measurement.rssi}`;
+            const label = measurement.ssid
+              ? `${measurement.ssid}  ${measurement.rssi} dBm`
+              : `${measurement.rssi} dBm`;
             const labelWidth = context.measureText(label).width;
             const labelX = x + unit * 0.85;
             context.fillStyle = "rgba(255,255,255,.92)";
@@ -666,7 +667,18 @@ export default function Home() {
         setMessage(`${activeRoom.name} 경계 안을 클릭해 주세요.`);
         return;
       }
-      const measurement: Measurement = { ...point, id: uid(), rssi: -60 };
+      if (!activeAp) {
+        setMessage("오른쪽에서 Wi‑Fi를 스캔하고 측정할 AP를 먼저 선택하세요.");
+        return;
+      }
+      const rssi = Math.max(-100, Math.min(-20, Math.round(activeAp.rssi)));
+      const measurement: Measurement = {
+        ...point,
+        id: uid(),
+        rssi,
+        ssid: activeAp.ssid,
+        bssid: activeAp.bssid.toUpperCase(),
+      };
       setRooms((current) =>
         current.map((room) =>
           room.id === activeRoomId
@@ -675,7 +687,9 @@ export default function Home() {
         ),
       );
       setSelectedMeasurementId(measurement.id);
-      setMessage("측정점이 추가되었습니다. 오른쪽에서 RSSI 값을 입력하세요.");
+      setMessage(
+        `${activeAp.ssid} · ${activeAp.bssid.toUpperCase()} · ${rssi} dBm 측정점을 저장했습니다.`,
+      );
       return;
     }
     if (mode === "router") {
@@ -794,7 +808,6 @@ export default function Home() {
     });
 
   const scanWifi = async () => {
-    if (!selectedMeasurement) return;
     setWifiScanning(true);
     setWifiError("");
     setWifiNetworks([]);
@@ -834,6 +847,9 @@ export default function Home() {
           )
         : scannedNetworks;
       setWifiNetworks(networks);
+      if (apFilter && networks.length > 0) {
+        setActiveAp(networks[0]);
+      }
       setMessage(
         networks.length
           ? apFilter
@@ -860,28 +876,8 @@ export default function Home() {
   };
 
   const selectWifiNetwork = (network: WifiNetwork) => {
-    if (!selectedMeasurement) return;
     const rssi = Math.max(-100, Math.min(-20, Math.round(network.rssi)));
-    setRooms((current) =>
-      current.map((room) =>
-        room.id === selectedMeasurement.room.id
-          ? {
-              ...room,
-              measurements: room.measurements.map((measurement) =>
-                measurement.id === selectedMeasurement.measurement.id
-                  ? {
-                      ...measurement,
-                      rssi,
-                      ssid: network.ssid,
-                      bssid: network.bssid.toUpperCase(),
-                    }
-                  : measurement,
-              ),
-            }
-          : room,
-      ),
-    );
-    setRssiDraft(String(rssi));
+    setActiveAp({ ...network, rssi });
     const nextFilter = {
       ssid: network.ssid,
       bssid: network.bssid.toUpperCase(),
@@ -893,12 +889,13 @@ export default function Home() {
     );
     setWifiNetworks([network]);
     setMessage(
-      `${network.ssid} · ${network.bssid.toUpperCase()} · ${rssi} dBm을 저장하고 선택 AP로 고정했습니다.`,
+      `${network.ssid} · ${network.bssid.toUpperCase()}를 선택했습니다. 도면에서 측정점을 클릭하세요.`,
     );
   };
 
   const clearApFilter = () => {
     setApFilter(null);
+    setActiveAp(null);
     setWifiNetworks([]);
     window.localStorage.removeItem(AP_FILTER_STORAGE_KEY);
     setMessage("AP 고정을 해제했습니다. 다음 스캔에서 주변 AP를 모두 표시합니다.");
@@ -915,7 +912,7 @@ export default function Home() {
       ),
     );
     setMode("measure");
-    setMessage(`${activeRoom.name} 다각형이 완성되었습니다. 측정점을 추가하세요.`);
+    setMessage(`${activeRoom.name} 다각형이 완성되었습니다. 오른쪽에서 AP를 선택하세요.`);
   };
 
   const commitRssiRange = () => {
@@ -1178,7 +1175,7 @@ export default function Home() {
               [
                 ["select", "선택·이동", "↖"],
                 ["boundary", "구역 경계", "⌗"],
-                ["measure", "RSSI 추가", "+"],
+                ["measure", "측정점 추가", "+"],
                 ["router", "공유기", "⌁"],
               ] as [ToolMode, string, string][]
             ).map(([tool, label, icon]) => (
@@ -1224,7 +1221,10 @@ export default function Home() {
               <strong>{activeRoom.name}</strong>
               <span>
                 {mode === "boundary" && "경계점을 차례대로 클릭한 뒤 다각형 완성"}
-                {mode === "measure" && "원하는 위치를 클릭해 측정점 추가"}
+                {mode === "measure" &&
+                  (activeAp
+                    ? `${activeAp.ssid} 측정점을 클릭해 추가`
+                    : "오른쪽에서 Wi‑Fi를 스캔하고 AP 선택")}
                 {mode === "select" && "측정점을 선택하거나 드래그"}
                 {mode === "router" && "공유기 위치를 클릭"}
               </span>
@@ -1453,7 +1453,7 @@ export default function Home() {
             <span>04</span>
             <div>
               <h2>노트북 Wi‑Fi 스캔</h2>
-              <p>측정점을 선택한 뒤 주변 AP를 읽습니다.</p>
+              <p>AP를 먼저 선택한 뒤 도면에 측정점을 추가하세요.</p>
             </div>
           </div>
 
@@ -1462,18 +1462,18 @@ export default function Home() {
             {helperReady ? "측정 도우미 연결됨" : "필요할 때 도우미 자동 실행"}
           </div>
 
-          {selectedMeasurement?.measurement.ssid && (
+          {activeAp && (
             <div className="saved-network">
-              <span>현재 측정 AP</span>
-              <strong>{selectedMeasurement.measurement.ssid}</strong>
-              <code>{selectedMeasurement.measurement.bssid}</code>
+              <span>선택된 측정 AP</span>
+              <strong>{activeAp.ssid}</strong>
+              <code>{activeAp.bssid.toUpperCase()} · {Math.round(activeAp.rssi)} dBm</code>
             </div>
           )}
 
           <button
             className="wifi-scan-button"
             onClick={scanWifi}
-            disabled={!selectedMeasurement || wifiScanning}
+            disabled={wifiScanning}
           >
             {wifiScanning ? "도우미 실행·검색 중…" : "노트북 Wi‑Fi 스캔"}
           </button>
@@ -1503,8 +1503,7 @@ export default function Home() {
                   key={`${network.bssid}-${network.channel || ""}`}
                   onClick={() => selectWifiNetwork(network)}
                   className={
-                    selectedMeasurement?.measurement.bssid?.toUpperCase() ===
-                    network.bssid.toUpperCase()
+                    activeAp?.bssid.toUpperCase() === network.bssid.toUpperCase()
                       ? "selected"
                       : ""
                   }
