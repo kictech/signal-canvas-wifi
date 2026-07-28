@@ -62,22 +62,13 @@ const PDFJS_URL =
 const PDFJS_WORKER_URL =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 const WIFI_HELPER_URL = "http://127.0.0.1:8765";
+const WIFI_HELPER_PROTOCOL = "signalcanvas://start";
 const AP_FILTER_STORAGE_KEY = "signal-canvas-selected-ap";
 
 const initialRooms: Room[] = [
-  { id: "living", name: "거실", color: "#2563eb", boundary: [], boundaryClosed: false, measurements: [] },
-  { id: "bed-1", name: "침실 1", color: "#7c3aed", boundary: [], boundaryClosed: false, measurements: [] },
-  { id: "bed-2", name: "침실 2", color: "#db2777", boundary: [], boundaryClosed: false, measurements: [] },
-  { id: "bed-3", name: "침실 3", color: "#ea580c", boundary: [], boundaryClosed: false, measurements: [] },
+  { id: "zone", name: "측정 구역", color: "#2563eb", boundary: [], boundaryClosed: false, measurements: [] },
 ];
-const roomColors = ["#0891b2", "#16a34a", "#ca8a04", "#dc2626", "#4f46e5", "#c026d3"];
-const defaultColorStops: ColorStop[] = [
-  { value: -90, color: "#dc2626" },
-  { value: -75, color: "#f97316" },
-  { value: -65, color: "#facc15" },
-  { value: -55, color: "#84cc16" },
-  { value: -30, color: "#16a34a" },
-];
+const heatColors = ["#dc2626", "#f97316", "#facc15", "#84cc16", "#16a34a"];
 
 function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -248,15 +239,24 @@ export default function Home() {
   const [pdfPages, setPdfPages] = useState(0);
   const [pdfPage, setPdfPage] = useState(1);
   const [zoom, setZoom] = useState(1);
-  const [newRoomName, setNewRoomName] = useState("");
   const [rssiDraft, setRssiDraft] = useState("");
   const [wifiNetworks, setWifiNetworks] = useState<WifiNetwork[]>([]);
   const [wifiScanning, setWifiScanning] = useState(false);
   const [wifiError, setWifiError] = useState("");
+  const [helperReady, setHelperReady] = useState(false);
   const [apFilter, setApFilter] = useState<ApFilter | null>(null);
-  const [colorStops, setColorStops] = useState<ColorStop[]>(defaultColorStops);
-  const [colorDrafts, setColorDrafts] = useState(
-    defaultColorStops.map((stop) => String(stop.value)),
+  const [rssiMinDraft, setRssiMinDraft] = useState("-90");
+  const [rssiMaxDraft, setRssiMaxDraft] = useState("-30");
+  const [rssiRange, setRssiRange] = useState({ min: -90, max: -30 });
+  const colorStops = useMemo<ColorStop[]>(
+    () =>
+      heatColors.map((color, index) => ({
+        color,
+        value:
+          rssiRange.min +
+          ((rssiRange.max - rssiRange.min) * index) / (heatColors.length - 1),
+      })),
+    [rssiRange],
   );
 
   const activeRoom = rooms.find((room) => room.id === activeRoomId)!;
@@ -296,6 +296,14 @@ export default function Home() {
     } catch {
       window.localStorage.removeItem(AP_FILTER_STORAGE_KEY);
     }
+  }, []);
+
+  useEffect(() => {
+    fetch(`${WIFI_HELPER_URL}/health`, {
+      signal: AbortSignal.timeout(1500),
+    })
+      .then((response) => setHelperReady(response.ok))
+      .catch(() => setHelperReady(false));
   }, []);
 
   const setCanvasImage = useCallback(async (source: string) => {
@@ -377,7 +385,7 @@ export default function Home() {
         await setCanvasImage(URL.createObjectURL(file));
       }
       setMode("boundary");
-      setMessage("거실의 경계점을 차례대로 클릭한 뒤 다각형을 완성하세요.");
+      setMessage("측정 구역의 경계점을 차례대로 클릭한 뒤 다각형을 완성하세요.");
     } catch (error) {
       console.error(error);
       setMessage(
@@ -400,7 +408,7 @@ export default function Home() {
       setRooms(initialRooms);
       setActiveRoomId(initialRooms[0].id);
       setRouter(null);
-      setMessage(`${nextPage}페이지를 불러왔습니다. 방 경계를 다시 지정하세요.`);
+      setMessage(`${nextPage}페이지를 불러왔습니다. 측정 구역을 다시 지정하세요.`);
     } finally {
       setLoading(false);
     }
@@ -750,17 +758,59 @@ export default function Home() {
     setMessage(`RSSI 값을 ${value} dBm으로 저장했습니다.`);
   };
 
+  const launchWifiHelper = () => {
+    const launcher = document.createElement("iframe");
+    launcher.hidden = true;
+    launcher.src = WIFI_HELPER_PROTOCOL;
+    document.body.appendChild(launcher);
+    window.setTimeout(() => launcher.remove(), 1800);
+  };
+
+  const waitForWifiHelper = async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        const response = await fetch(`${WIFI_HELPER_URL}/health`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(900),
+        });
+        if (response.ok) {
+          setHelperReady(true);
+          return true;
+        }
+      } catch {
+        // The helper may still be starting.
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 450));
+    }
+    return false;
+  };
+
+  const requestWifiScan = () =>
+    fetch(`${WIFI_HELPER_URL}/scan`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+    });
+
   const scanWifi = async () => {
     if (!selectedMeasurement) return;
     setWifiScanning(true);
     setWifiError("");
     setWifiNetworks([]);
     try {
-      const response = await fetch(`${WIFI_HELPER_URL}/scan`, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(12000),
-      });
+      let response: Response;
+      try {
+        response = await requestWifiScan();
+        setHelperReady(true);
+      } catch {
+        setHelperReady(false);
+        setMessage("Windows 측정 도우미를 자동으로 실행하는 중입니다…");
+        launchWifiHelper();
+        const ready = await waitForWifiHelper();
+        if (!ready) throw new Error("HELPER_NOT_READY");
+        response = await requestWifiScan();
+      }
       const payload = (await response.json()) as {
         networks?: WifiNetwork[];
         error?: string;
@@ -796,7 +846,9 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       setWifiError(
-        error instanceof Error &&
+        error instanceof Error && error.message === "HELPER_NOT_READY"
+          ? "측정 도우미가 설치되어 있지 않거나 실행 승인이 필요합니다. 아래 설치 파일을 최초 1회 실행하세요."
+          : error instanceof Error &&
           error.message &&
           !error.message.includes("Failed to fetch")
           ? error.message
@@ -866,57 +918,23 @@ export default function Home() {
     setMessage(`${activeRoom.name} 다각형이 완성되었습니다. 측정점을 추가하세요.`);
   };
 
-  const addRoom = () => {
-    const name = newRoomName.trim();
-    if (!name) {
-      setMessage("추가할 공간 이름을 입력하세요.");
+  const commitRssiRange = () => {
+    const min = Number(rssiMinDraft);
+    const max = Number(rssiMaxDraft);
+    if (
+      !Number.isFinite(min) ||
+      !Number.isFinite(max) ||
+      min < -120 ||
+      max > 0 ||
+      min >= max
+    ) {
+      setRssiMinDraft(String(rssiRange.min));
+      setRssiMaxDraft(String(rssiRange.max));
+      setMessage("최소값은 최대값보다 작아야 하며 -120~0 dBm 범위여야 합니다.");
       return;
     }
-    const room: Room = {
-      id: uid(),
-      name,
-      color: roomColors[rooms.length % roomColors.length],
-      boundary: [],
-      boundaryClosed: false,
-      measurements: [],
-    };
-    setRooms((current) => [...current, room]);
-    setActiveRoomId(room.id);
-    setNewRoomName("");
-    setMode("boundary");
-    setMessage(`${name}의 경계점을 차례대로 클릭하세요.`);
-  };
-
-  const updateColorStop = (
-    index: number,
-    patch: Partial<ColorStop>,
-  ) => {
-    setColorStops((current) =>
-      current.map((stop, stopIndex) =>
-        stopIndex === index ? { ...stop, ...patch } : stop,
-      ),
-    );
-  };
-
-  const commitColorStopValue = (index: number) => {
-    const value = Number(colorDrafts[index]);
-    if (!Number.isFinite(value) || value < -100 || value > -20) {
-      setColorDrafts((current) =>
-        current.map((draft, draftIndex) =>
-          draftIndex === index ? String(colorStops[index].value) : draft,
-        ),
-      );
-      setMessage("색상 기준값은 -100에서 -20 dBm 사이여야 합니다.");
-      return;
-    }
-    updateColorStop(index, { value });
-    setMessage(`색상 기준 ${index + 1}을 ${value} dBm으로 저장했습니다.`);
-  };
-
-  const resetColorMapping = () => {
-    setColorStops(defaultColorStops);
-    setColorDrafts(defaultColorStops.map((stop) => String(stop.value)));
-    setMessage("신호 색상 매핑을 기본값으로 복원했습니다.");
+    setRssiRange({ min, max });
+    setMessage(`RSSI 색상 범위를 ${min}~${max} dBm으로 저장했습니다.`);
   };
 
   const deleteSelected = () => {
@@ -951,7 +969,7 @@ export default function Home() {
     setRouter(null);
     setSelectedMeasurementId(null);
     setMode("boundary");
-    setMessage("모든 표시를 지웠습니다. 거실 경계부터 지정하세요.");
+    setMessage("모든 표시를 지웠습니다. 측정 구역 경계부터 지정하세요.");
   };
 
   const downloadPng = () => {
@@ -999,12 +1017,10 @@ export default function Home() {
 
     const header = [
       "측정 위치",
-      "공간",
       ...accessPoints.map((ap) => `${ap.ssid} (${ap.bssid})`),
     ];
-    const rows = measurements.map(({ room, measurement }, index) => [
+    const rows = measurements.map(({ measurement }, index) => [
       `P${index + 1}`,
-      room.name,
       ...accessPoints.map((ap) =>
         measurement.bssid?.toUpperCase() === ap.bssid ? measurement.rssi : null,
       ),
@@ -1025,18 +1041,6 @@ export default function Home() {
     setMessage(
       `측정 위치 ${measurements.length}개와 AP ${accessPoints.length}개의 엑셀 파일을 저장했습니다.`,
     );
-  };
-
-  const chooseRoom = (room: Room) => {
-    setActiveRoomId(room.id);
-    setSelectedMeasurementId(null);
-    if (!room.boundaryClosed) {
-      setMode("boundary");
-      setMessage(`${room.name}의 경계점을 차례대로 클릭하고 다각형을 완성하세요.`);
-    } else {
-      setMode("measure");
-      setMessage(`${room.name} 내부를 클릭해 RSSI 측정점을 추가하세요.`);
-    }
   };
 
   return (
@@ -1076,44 +1080,18 @@ export default function Home() {
           <div className="panel-heading">
             <span>01</span>
             <div>
-              <h2>공간 설정</h2>
-              <p>방을 선택하고 경계를 지정하세요.</p>
+              <h2>구역 설정</h2>
+              <p>도면에서 측정할 영역을 다각형으로 지정하세요.</p>
             </div>
           </div>
 
-          <div className="room-list">
-            {rooms.map((room) => (
-              <button
-                key={room.id}
-                className={`room-card ${
-                  activeRoomId === room.id ? "active" : ""
-                }`}
-                onClick={() => chooseRoom(room)}
-                style={{ "--room-color": room.color } as React.CSSProperties}
-              >
-                <span className="room-swatch" />
-                <span className="room-main">
-                  <strong>{room.name}</strong>
-                  <small>
-                    경계 {room.boundaryClosed ? "완료" : `${room.boundary.length}점`} · 측정 {room.measurements.length}개
-                  </small>
-                </span>
-                <span className="room-chevron">›</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="room-add-row">
-            <input
-              value={newRoomName}
-              onChange={(event) => setNewRoomName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") addRoom();
-              }}
-              placeholder="공간 이름"
-              aria-label="추가할 공간 이름"
-            />
-            <button onClick={addRoom}>공간 추가</button>
+          <div className="zone-summary">
+            <strong>측정 구역</strong>
+            <span>
+              {activeRoom.boundaryClosed
+                ? `다각형 완료 · 측정점 ${activeRoom.measurements.length}개`
+                : `경계점 ${activeRoom.boundary.length}개 · 최소 3개 필요`}
+            </span>
           </div>
 
           <div className="boundary-actions">
@@ -1135,6 +1113,59 @@ export default function Home() {
 
           <div className="separator" />
 
+          <div className="rssi-range-card">
+            <div>
+              <strong>RSSI 신호 세기</strong>
+              <small>히트맵 색상 범위</small>
+            </div>
+            <div className="rssi-range-inputs">
+              <label>
+                최소값
+                <span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={rssiMinDraft}
+                    onChange={(event) =>
+                      setRssiMinDraft(event.target.value.replace(/[^\d-]/g, ""))
+                    }
+                    onBlur={commitRssiRange}
+                    aria-label="RSSI 최소값"
+                  />
+                  dBm
+                </span>
+              </label>
+              <label>
+                최대값
+                <span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={rssiMaxDraft}
+                    onChange={(event) =>
+                      setRssiMaxDraft(event.target.value.replace(/[^\d-]/g, ""))
+                    }
+                    onBlur={commitRssiRange}
+                    aria-label="RSSI 최대값"
+                  />
+                  dBm
+                </span>
+              </label>
+            </div>
+            <div
+              className="legend-gradient"
+              style={{
+                background: `linear-gradient(90deg, ${heatColors.join(", ")})`,
+              }}
+            />
+            <div className="rssi-range-scale">
+              <span>{rssiRange.min} dBm</span>
+              <span>{rssiRange.max} dBm</span>
+            </div>
+          </div>
+
+          <div className="separator" />
+
           <div className="panel-heading compact">
             <span>02</span>
             <div>
@@ -1146,7 +1177,7 @@ export default function Home() {
             {(
               [
                 ["select", "선택·이동", "↖"],
-                ["boundary", "방 경계", "⌗"],
+                ["boundary", "구역 경계", "⌗"],
                 ["measure", "RSSI 추가", "+"],
                 ["router", "공유기", "⌁"],
               ] as [ToolMode, string, string][]
@@ -1223,8 +1254,8 @@ export default function Home() {
                   +
                 </button>
               </div>
-              <div className="canvas-stats">
-              <span>{rooms.filter((room) => room.boundaryClosed).length}/{rooms.length} 공간</span>
+            <div className="canvas-stats">
+              <span>{activeRoom.boundaryClosed ? "구역 완료" : "구역 설정 중"}</span>
               <span>{measurementCount} 측정점</span>
               </div>
             </div>
@@ -1310,47 +1341,6 @@ export default function Home() {
               <small>-100에서 -20 dBm 사이</small>
             </div>
 
-            <div className="floating-network">
-              {selectedMeasurement?.measurement.ssid ? (
-                <div className="saved-network">
-                  <span>저장된 AP</span>
-                  <strong>{selectedMeasurement.measurement.ssid}</strong>
-                  <code>{selectedMeasurement.measurement.bssid}</code>
-                </div>
-              ) : (
-                <div className="saved-network empty-network">
-                  <span>저장된 AP</span>
-                  <strong>아직 선택되지 않음</strong>
-                  <code>Wi‑Fi를 스캔해 선택하세요.</code>
-                </div>
-              )}
-            </div>
-
-            <div className="floating-scan">
-              <button
-                className="wifi-scan-button"
-                onClick={scanWifi}
-                disabled={!selectedMeasurement || wifiScanning}
-              >
-                {wifiScanning ? "주변 Wi‑Fi 검색 중…" : "노트북 Wi‑Fi 스캔"}
-              </button>
-              {apFilter && (
-                <div className="ap-filter-card">
-                  <span>선택 AP만 표시</span>
-                  <strong>{apFilter.ssid}</strong>
-                  <code>{apFilter.bssid}</code>
-                  <button onClick={clearApFilter}>필터 해제·다른 AP 선택</button>
-                </div>
-              )}
-              <a
-                className="helper-download"
-                href="/downloads/signal-canvas-wifi-helper.zip"
-                download
-              >
-                Windows 측정 도우미 다운로드
-              </a>
-            </div>
-
             <div className="floating-actions">
               <button
                 className="button button-danger"
@@ -1375,40 +1365,6 @@ export default function Home() {
               </button>
             </div>
 
-            {(wifiError || wifiNetworks.length > 0) && (
-              <div className="floating-results">
-                {wifiError && <p className="wifi-error">{wifiError}</p>}
-                {wifiNetworks.length > 0 && (
-                  <div
-                    className="wifi-list"
-                    role="list"
-                    aria-label="주변 Wi‑Fi 목록"
-                  >
-                    {wifiNetworks.map((network) => (
-                      <button
-                        key={`${network.bssid}-${network.channel || ""}`}
-                        onClick={() => selectWifiNetwork(network)}
-                        className={
-                          selectedMeasurement?.measurement.bssid?.toUpperCase() ===
-                          network.bssid.toUpperCase()
-                            ? "selected"
-                            : ""
-                        }
-                      >
-                        <span className="wifi-main">
-                          <strong>{network.ssid}</strong>
-                          <code>{network.bssid.toUpperCase()}</code>
-                        </span>
-                        <span className="wifi-reading">
-                          <strong>{Math.round(network.rssi)} dBm</strong>
-                          {network.channel && <small>CH {network.channel}</small>}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           <div className="privacy-note">
@@ -1491,64 +1447,80 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="legend-card">
-            <div className="legend-title">
-              <strong>RSSI 신호 세기</strong>
-              <button
-                className="legend-reset"
-                onClick={resetColorMapping}
-              >
-                기본값
-              </button>
-            </div>
-            <div
-              className="legend-gradient"
-              style={{
-                background: `linear-gradient(90deg, ${[...colorStops]
-                  .sort((a, b) => a.value - b.value)
-                  .map((stop) => stop.color)
-                  .join(", ")})`,
-              }}
-            />
-            <div className="color-stop-list">
-              {colorStops.map((stop, index) => (
-                <div className="color-stop-row" key={index}>
-                  <input
-                    type="color"
-                    value={stop.color}
-                    onChange={(event) =>
-                      updateColorStop(index, { color: event.target.value })
-                    }
-                    aria-label={`${stop.value} dBm 색상`}
-                  />
-                  <input
-                    className="color-stop-value"
-                    type="text"
-                    inputMode="numeric"
-                    value={colorDrafts[index]}
-                    onChange={(event) =>
-                      setColorDrafts((current) =>
-                        current.map((draft, draftIndex) =>
-                          draftIndex === index
-                            ? event.target.value.replace(/[^\d-]/g, "")
-                            : draft,
-                        ),
-                      )
-                    }
-                    onBlur={() => commitColorStopValue(index)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        commitColorStopValue(index);
-                        event.currentTarget.blur();
-                      }
-                    }}
-                    aria-label={`색상 기준 ${index + 1} RSSI`}
-                  />
-                  <span>dBm</span>
-                </div>
-              ))}
+          <div className="separator" />
+
+          <div className="panel-heading compact wifi-heading">
+            <span>04</span>
+            <div>
+              <h2>노트북 Wi‑Fi 스캔</h2>
+              <p>측정점을 선택한 뒤 주변 AP를 읽습니다.</p>
             </div>
           </div>
+
+          <div className={`helper-status ${helperReady ? "ready" : ""}`}>
+            <span />
+            {helperReady ? "측정 도우미 연결됨" : "필요할 때 도우미 자동 실행"}
+          </div>
+
+          {selectedMeasurement?.measurement.ssid && (
+            <div className="saved-network">
+              <span>현재 측정 AP</span>
+              <strong>{selectedMeasurement.measurement.ssid}</strong>
+              <code>{selectedMeasurement.measurement.bssid}</code>
+            </div>
+          )}
+
+          <button
+            className="wifi-scan-button"
+            onClick={scanWifi}
+            disabled={!selectedMeasurement || wifiScanning}
+          >
+            {wifiScanning ? "도우미 실행·검색 중…" : "노트북 Wi‑Fi 스캔"}
+          </button>
+
+          {apFilter && (
+            <div className="ap-filter-card">
+              <span>선택 AP만 표시</span>
+              <strong>{apFilter.ssid}</strong>
+              <code>{apFilter.bssid}</code>
+              <button onClick={clearApFilter}>필터 해제·다른 AP 선택</button>
+            </div>
+          )}
+
+          <a
+            className="helper-download"
+            href="/downloads/signal-canvas-wifi-helper.zip"
+            download
+          >
+            최초 1회: Windows 측정 도우미 설치
+          </a>
+
+          {wifiError && <p className="wifi-error">{wifiError}</p>}
+          {wifiNetworks.length > 0 && (
+            <div className="wifi-list" role="list" aria-label="주변 Wi‑Fi 목록">
+              {wifiNetworks.map((network) => (
+                <button
+                  key={`${network.bssid}-${network.channel || ""}`}
+                  onClick={() => selectWifiNetwork(network)}
+                  className={
+                    selectedMeasurement?.measurement.bssid?.toUpperCase() ===
+                    network.bssid.toUpperCase()
+                      ? "selected"
+                      : ""
+                  }
+                >
+                  <span className="wifi-main">
+                    <strong>{network.ssid}</strong>
+                    <code>{network.bssid.toUpperCase()}</code>
+                  </span>
+                  <span className="wifi-reading">
+                    <strong>{Math.round(network.rssi)} dBm</strong>
+                    {network.channel && <small>CH {network.channel}</small>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
         </aside>
       </div>

@@ -7,4 +7,3 @@ if %errorlevel%==0 (
 ) else (
   python wifi_helper.py
 )
-pause
