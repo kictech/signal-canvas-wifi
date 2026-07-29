@@ -42,12 +42,20 @@ Word 형식은 [Signal_Canvas_User_Manual_KO.docx](docs/Signal_Canvas_User_Manua
 | 중앙 | 도면, 확대·축소, 측정점 편집, 초기화, PNG·Excel 저장 |
 | 오른쪽 | 보간 방식, 투명도, 표시 옵션, 노트북 Wi-Fi 스캔 및 AP 선택 |
 
+![Signal Canvas 화면 구성](docs/images/ui-overview.png)
+
+**그림 1. Signal Canvas UI 화면 구성** — ① 구역·색상 설정, ② 도면·측정점, ③ 신호 분석·Wi-Fi, ④ 측정값·결과 저장 영역으로 구성됩니다.
+
 작업 도구는 다음 네 가지입니다.
 
 - **선택·이동**: 측정점을 선택하거나 드래그하여 이동
 - **구역 경계**: 도면을 차례대로 클릭하여 다각형 경계 작성
 - **측정점 추가**: 선택된 AP와 최근 RSSI를 클릭 위치에 저장
 - **공유기**: 공유기 위치를 클릭하여 표시하고 드래그하여 이동
+
+![Signal Canvas 측정 작업 흐름](docs/images/measurement-workflow.png)
+
+**그림 2. 기본 측정 흐름** — 도면 업로드부터 결과 저장까지 왼쪽에서 오른쪽 순서로 진행합니다.
 
 ## 4. Windows 측정 도우미 최초 설치
 
